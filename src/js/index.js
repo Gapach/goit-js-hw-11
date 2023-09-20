@@ -1,97 +1,101 @@
-import { Notify } from 'notiflix/build/notiflix-notify-aio';
-import { fetchPhoto } from './pixabay-api';
-import { createMarkup } from './markup';
-import { refs } from './refs';
-import { lightbox } from './lightbox';
+import Notiflix from 'notiflix';
+import SimpleLightbox from "simplelightbox";
+import "simplelightbox/dist/simple-lightbox.min.css";
+import debounce from 'lodash.debounce';
+import FetchImg from './pixabay-api';
+import markup from './markup'
 
-const { searchForm, gallery, btnLoadMore } = refs;
 
-const paramsForNotify = {
-    position: 'center-center',
-    timeout: 4000,
-    width: '400px',
-    fontSize: '24px'
+const refs = {
+    formEl: document.querySelector('.search-form'),
+    formInputField: document.querySelector('input[name="searchQuery"]'),
+    formBtn: document.querySelector('.submit'),
+    imgCard: document.querySelector('.gallery'),
+    preloader: document.querySelectorAll('.loader div'),
 };
 
-const perPage = 40;
-let page = 1;
-let keyOfSearchPhoto = '';
+const fetchImg = new FetchImg();
+let gallerySimpleLightbox = new SimpleLightbox('.img_wrap a', { 
+    captionsData: 'alt',
+    captionDelay: 250,
+});
 
-btnLoadMore.classList.add('is-hidden');
+refs.formEl.addEventListener('submit', onSearchImages);
 
-searchForm.addEventListener('submit', onSubmitForm);
+async function onSearchImages(evt) {
+    evt.preventDefault();
 
-function onSubmitForm(event) {
-    event.preventDefault();
+    fetchImg.inputTitle = evt.currentTarget.elements.searchQuery.value.trim();
+    resetMarkup();
+    fetchImg.resetPage();
+    fetchImg.resetCurrentHits();
 
-    gallery.innerHTML = '';
-    page = 1;
-    const { searchQuery } = event.currentTarget.elements;
-    keyOfSearchPhoto = searchQuery.value
-        .trim()
-        .toLowerCase()
-        .split(' ')
-        .join('+');
-
-
-    if (keyOfSearchPhoto === '') {
-        Notify.info('Enter your request, please!', paramsForNotify);
+    if (fetchImg.inputTitle === '') {
+        Notiflix.Notify.warning('Field must not be empty');
+        refs.formInputField.value = '';
         return;
     }
 
-    fetchPhoto(keyOfSearchPhoto, page, perPage)
-        .then(data => {
-            const searchResults = data.hits;
-            if (data.totalHits === 0) {
-                Notify.failure('Sorry, there are no images matching your search query. Please try again.', paramsForNotify);
-            } else {
-                Notify.info(`Hooray! We found ${data.totalHits} images.`, paramsForNotify);
-                createMarkup(searchResults);
-                lightbox.refresh();
+    refs.preloader.forEach(e => {
+        e.style.display = 'block';
+    });
 
-            };
-            if (data.totalHits > perPage) {
-                btnLoadMore.classList.remove('is-hidden');
-                window.addEventListener('scroll', showLoadMorePage);
-            };
-        })
-        .catch(onFetchError);
+    refs.formInputField.value = '';
 
-    btnLoadMore.addEventListener('click', onClickLoadMore);
+    try {
+        const data = await fetchImg.fetchImg();
+        if (data.totalHits === 0) {
+            Notiflix.Notify.failure('Sorry, there are no images matching your search query. Please try again.');
+            return;
+        } else if (fetchImg.currentHits >= data.totalHits) {
+            Notiflix.Notify.warning("We're sorry, but you've reached the end of search results.");
+        } else if (fetchImg.page === 2) {
+            Notiflix.Notify.success(`Hooray! We found ${data.totalHits} images.`);
+        };
+        
+        refs.imgCard.insertAdjacentHTML('beforeend', markup(data.hits));
+        gallerySimpleLightbox.refresh();
+        refs.preloader.forEach(e => { e.style.display = 'none'; });
+    } catch (err) {
+        console.log(err);
+        resetMarkup();
+        refs.preloader.forEach(e => { e.style.display = 'none';  });
+    }
+}
 
-    event.currentTarget.reset();
-};
+async function onLoadMore() {
+    try {
+        const data = await fetchImg.fetchImg();
+    
+        if (fetchImg.currentHits >= data.totalHits) {
+            Notiflix.Notify.warning(
+                "We're sorry, but you've reached the end of search results."
+            );
+        } else {
+            refs.imgCard.insertAdjacentHTML('beforeend', markup(data.hits));
+            gallerySimpleLightbox.refresh();
+            refs.preloader.forEach(e => { e.style.display = 'none'; });
+        }
+    } catch (err) {
+        console.log(err);
+    }
+    const { height: cardHeight } = refs.imgCard.firstElementChild.getBoundingClientRect();
 
-function onClickLoadMore() {
-    page += 1;
-    fetchPhoto(keyOfSearchPhoto, page, perPage)
-        .then(data => {
-            const searchResults = data.hits;
-            const numberOfPage = Math.ceil(data.totalHits / perPage);
-            
-            createMarkup(searchResults);
-            if (page === numberOfPage) {
-                btnLoadMore.classList.add('is-hidden');
-                Notify.info("We're sorry, but you've reached the end of search results.", paramsForNotify);
-                btnLoadMore.removeEventListener('click', onClickLoadMore);
-                window.removeEventListener('scroll', showLoadMorePage);
-            };
-            lightbox.refresh();
-        })
-        .catch(onFetchError);
-};
+    window.scrollBy({
+        top: cardHeight * 2,
+        behavior: 'smooth',
+    });
+}
 
-function onFetchError() {
-    Notify.failure('Oops! Something went wrong! Try reloading the page or make another choice!', paramsForNotify);
-};
-function showLoadMorePage() {
-    if (checkIfEndOfPage()) {
-        onClickLoadMore();
-    };
-};
+const onScrollListener = debounce((e) => {
+        const documentRect = document.documentElement.getBoundingClientRect();
+    if (documentRect.bottom < document.documentElement.clientHeight + 1) {
+        onLoadMore();
+    }
+}, 200);
 
-function checkIfEndOfPage() {
-  return (
-    window.innerHeight + window.scrollY >= document.documentElement.scrollHeight
-  );
+window.addEventListener('scroll', onScrollListener);
+
+function resetMarkup() {
+    refs.imgCard.innerHTML = '';
 }
