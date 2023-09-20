@@ -15,10 +15,10 @@ const refs = {
 };
 
 const fetchImg = new FetchImg();
-let gallerySimpleLightbox = new SimpleLightbox('.img_wrap a', { 
+let gallerySimpleLightbox = new SimpleLightbox('.gallery a', {
     captionsData: 'alt',
     captionDelay: 250,
-});
+  });
 
 refs.formEl.addEventListener('submit', onSearchImages);
 
