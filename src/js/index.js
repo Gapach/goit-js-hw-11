@@ -1,101 +1,123 @@
-import Notiflix from 'notiflix';
-import SimpleLightbox from "simplelightbox";
-import "simplelightbox/dist/simple-lightbox.min.css";
-import debounce from 'lodash.debounce';
-import FetchImg from './pixabay-api';
-import markup from './markup'
+import SimpleLightbox from 'simplelightbox';
+import 'simplelightbox/dist/simple-lightbox.min.css';
+import '../css/styles.css';
+import { fetchImages } from './pixabay-api';
+import { Notify } from 'notiflix/build/notiflix-notify-aio';
 
+const options = {
+  root: null,
+  rootMargin: '300px',
+  threshold: 1.0,
+};
+const observer = new IntersectionObserver(onInfinityLoad, options);
+
+let page = 1;
 
 const refs = {
-    formEl: document.querySelector('.search-form'),
-    formInputField: document.querySelector('input[name="searchQuery"]'),
-    formBtn: document.querySelector('.submit'),
-    imgCard: document.querySelector('.gallery'),
-    preloader: document.querySelectorAll('.loader div'),
+  form: document.querySelector('.search-form'),
+  input: document.querySelector('.search-input'),
+  list: document.querySelector('.gallery'),
+  guard: document.querySelector('.js-guard'),
 };
 
-const fetchImg = new FetchImg();
-let gallerySimpleLightbox = new SimpleLightbox('.gallery a', {
-    captionsData: 'alt',
-    captionDelay: 250,
-  });
+refs.form.addEventListener('submit', onInputName);
 
-refs.formEl.addEventListener('submit', onSearchImages);
+async function onInputName(evt) {
+  evt.preventDefault();
 
-async function onSearchImages(evt) {
-    evt.preventDefault();
-
-    fetchImg.inputTitle = evt.currentTarget.elements.searchQuery.value.trim();
-    resetMarkup();
-    fetchImg.resetPage();
-    fetchImg.resetCurrentHits();
-
-    if (fetchImg.inputTitle === '') {
-        Notiflix.Notify.warning('Field must not be empty');
-        refs.formInputField.value = '';
-        return;
+  const name = refs.input.value;
+  if (!name) {
+    return;
+  }
+  page = 1;
+  try {
+    const data = await fetchImages(name, page);
+    if (!data.total) {
+      Notify.failure(
+        `Sorry, there are no images matching your search query. Please try again.`
+      );
+      return;
+    } else {
+      Notify.success(`Hooray! We found ${data.totalHits} images.`);
     }
 
-    refs.preloader.forEach(e => {
-        e.style.display = 'block';
-    });
-
-    refs.formInputField.value = '';
-
-    try {
-        const data = await fetchImg.fetchImg();
-        if (data.totalHits === 0) {
-            Notiflix.Notify.failure('Sorry, there are no images matching your search query. Please try again.');
-            return;
-        } else if (fetchImg.currentHits >= data.totalHits) {
-            Notiflix.Notify.warning("We're sorry, but you've reached the end of search results.");
-        } else if (fetchImg.page === 2) {
-            Notiflix.Notify.success(`Hooray! We found ${data.totalHits} images.`);
-        };
-        
-        refs.imgCard.insertAdjacentHTML('beforeend', markup(data.hits));
-        gallerySimpleLightbox.refresh();
-        refs.preloader.forEach(e => { e.style.display = 'none'; });
-    } catch (err) {
-        console.log(err);
-        resetMarkup();
-        refs.preloader.forEach(e => { e.style.display = 'none';  });
-    }
+    const markup = createMarkup(data);
+    newMarkup(markup);
+    lightbox.refresh();
+    observer.observe(refs.guard);
+  } catch (error) {
+    createErrorMessage(error);
+  }
 }
 
-async function onLoadMore() {
-    try {
-        const data = await fetchImg.fetchImg();
-    
-        if (fetchImg.currentHits >= data.totalHits) {
-            Notiflix.Notify.warning(
-                "We're sorry, but you've reached the end of search results."
+function createMarkup(data) {
+  const markup = data.hits.map(
+    ({
+      webformatURL,
+      largeImageURL,
+      tags,
+      likes,
+      views,
+      comments,
+      downloads,
+    }) => `   
+    <div class="photo-card">
+      <a href="${largeImageURL}">
+        <img src="${webformatURL}" alt="${tags}" loading="lazy" /></a>
+      <div class="info">
+        <p class="info-item">
+          <b>Likes</b>
+          <br>${likes}
+        </p>
+        <p class="info-item">
+          <b>Views</b>
+          <br>${views}
+        </p>
+        <p class="info-item">
+          <b>Comments</b>
+          <br>${comments}
+        </p>
+        <p class="info-item">
+          <b>Downloads</b>
+          <br>${downloads}
+        </p>
+      </div>
+    </div>`
+  );
+  return markup.join('');
+}
+
+function newMarkup(markup) {
+  refs.list.innerHTML = markup;
+}
+
+function addMarkup(markup) {
+  refs.list.insertAdjacentHTML('beforeend', markup);
+}
+
+function createErrorMessage(err) {
+  Notify.failure(`${err}`);
+}
+
+async function onInfinityLoad(entries) {
+  entries.forEach(entry => {
+    if (entry.isIntersecting) {
+      page += 1;
+      fetchImages(refs.input.value, page)
+        .then(data => {
+          const markup = createMarkup(data);
+          addMarkup(markup);
+          lightbox.refresh();
+          if (data.totalHits / 40 <= page) {
+            observer.unobserve(refs.guard);
+            Notify.success(
+              `We're sorry, but you've reached the end of search results.`
             );
-        } else {
-            refs.imgCard.insertAdjacentHTML('beforeend', markup(data.hits));
-            gallerySimpleLightbox.refresh();
-            refs.preloader.forEach(e => { e.style.display = 'none'; });
-        }
-    } catch (err) {
-        console.log(err);
+          }
+        })
+        .catch(createErrorMessage);
     }
-    const { height: cardHeight } = refs.imgCard.firstElementChild.getBoundingClientRect();
-
-    window.scrollBy({
-        top: cardHeight * 2,
-        behavior: 'smooth',
-    });
+  });
 }
 
-const onScrollListener = debounce((e) => {
-        const documentRect = document.documentElement.getBoundingClientRect();
-    if (documentRect.bottom < document.documentElement.clientHeight + 1) {
-        onLoadMore();
-    }
-}, 200);
-
-window.addEventListener('scroll', onScrollListener);
-
-function resetMarkup() {
-    refs.imgCard.innerHTML = '';
-}
+const lightbox = new SimpleLightbox('.gallery a');
